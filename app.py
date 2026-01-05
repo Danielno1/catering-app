@@ -4,17 +4,18 @@ from datetime import date
 
 st.set_page_config(page_title="料理成本智慧系統", layout="wide")
 
-# 試算表 ID
+# 1. 定義試算表 CSV 讀取連結
 SHEET_ID = "1dPuQ80Yudrym53l3h6FJygu2Yj_Y7fyfLBXNnFAEa4"
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet1"
 
 st.title("🛡️ 料理成本智慧系統")
 
-# --- 讀取資料 ---
 @st.cache_data(ttl=5)
 def load_data():
     try:
-        return pd.read_csv(CSV_URL)
+        # 讀取雲端資料
+        data = pd.read_csv(CSV_URL)
+        return data
     except:
         return pd.DataFrame()
 
@@ -25,12 +26,11 @@ tab1, tab2 = st.tabs(["🛒 採買記帳", "📊 成本分析"])
 with tab1:
     st.subheader("📝 成本快速計算器")
     with st.form("purchase_form", clear_on_submit=False):
-        # 找回日期與店家
         col_date, col_shop = st.columns(2)
-        buy_date = col_date.date_input("採買日期", date.today())
-        shop = col_shop.text_input("採買店家 (例如：貴吉、市場)")
-        
-        name = st.text_input("食材項目 (例如：豬肉絲)")
+        # 完全對應您的試算表標題：日期、採買店家、項目
+        buy_date = col_date.date_input("日期", date.today())
+        shop = col_shop.text_input("採買店家")
+        name = st.text_input("項目 (食材名稱)")
         
         col3, col4, col5 = st.columns([1, 1, 1])
         price = col3.number_input("總價 (元)", min_value=0, step=1)
@@ -39,35 +39,36 @@ with tab1:
         
         if st.form_submit_button("⚖️ 開始換算"):
             if not name:
-                st.error("⚠️ 請輸入食材項目名稱！")
+                st.error("⚠️ 請輸入項目名稱！")
             else:
                 # 台斤換算：1台斤 = 600g
                 real_g = weight * 600 if unit == "台斤" else weight
                 cost_per_g = round(price / real_g, 4)
                 
-                st.success(f"✅ 計算成功！")
+                st.success(f"✅ 計算成功！請手動填入試算表第一列：")
                 st.markdown(f"""
-                ### 📋 換算結果 (請填入試算表)
-                * **日期：** {buy_date}
-                * **來源：** {shop if shop else '未填寫'}
-                * **項目：** {name}
-                * **實際總重量：** {real_g} g
-                * **💰 每克成本：** :red[**${cost_per_g}**] 元
+                | 日期 | 採買店家 | 項目 | 總價 | 重量(g) | 每克成本 |
+                | :--- | :--- | :--- | :--- | :--- | :--- |
+                | {buy_date} | {shop} | {name} | {price} | {real_g} | **{cost_per_g}** |
                 """)
-                st.warning("💡 請手動將以上數據填入 Google 試算表，系統即可同步單價。")
+                st.info("💡 填好後，切換到『成本分析』分頁即可直接選用。")
 
 with tab2:
-    if df.empty or '項目' not in df.columns:
-        st.warning("⚠️ 試算表目前沒有資料，或標題列不正確。")
+    # 這裡檢查欄位，必須跟您的 A1 到 F1 完全一樣
+    required_cols = ['日期', '採買店家', '項目', '每克成本']
+    
+    if df.empty or not all(c in df.columns for c in required_cols):
+        st.warning("⚠️ 雲端資料庫同步中，或欄位名稱未對齊。")
+        st.write("目前偵測到的標題：", list(df.columns) if not df.empty else "讀取不到資料")
     else:
         st.subheader("📊 雲端單價庫 (Sheet1)")
-        # 顯示包含日期的歷史資料
-        display_cols = [c for c in ['時間', '採買日期', '採買店家', '項目', '每克成本'] if c in df.columns]
-        st.dataframe(df[display_cols].tail(10), use_container_width=True)
+        # 只顯示您需要的資訊
+        st.dataframe(df[['日期', '採買店家', '項目', '每克成本']].tail(10), use_container_width=True)
         
         st.divider()
         st.subheader("⚖️ 料理配方試算")
         
+        # 抓取每個項目最後一次更新的單價
         price_dict = df.groupby('項目')['每克成本'].last().to_dict()
         items = sorted(list(price_dict.keys()))
         
