@@ -2,89 +2,67 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-st.set_page_config(page_title="餐飲成本智慧助手", layout="wide")
+st.set_page_config(page_title="餐飲助手", layout="wide")
 
-# 這裡直接寫死您的網址，避開 Secrets 設定
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1dPuQ80Yudrym53l3h6FJygu2Yj_Y7fyfLBXNnFAEa4"
+# 1. 這裡直接寫您的網址
+URL = "https://docs.google.com/spreadsheets/d/1dPuQ80Yudrym53l3h6FJygu2Yj_Y7fyfLBXNnFAEa4"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-st.title("🛡️ 料理成本智慧連動系統")
+st.title("🛡️ 料理成本智慧系統")
 
-# --- 讀取資料庫 (使用 Sheet1 避免編碼錯誤) ---
+# 2. 讀取資料 (使用 Sheet1 避免編碼報錯)
 try:
-    inventory_df = conn.read(spreadsheet=SHEET_URL, worksheet="Sheet1")
-    price_dict = inventory_df.groupby('項目')['每克成本'].last().to_dict()
-    item_list = sorted(list(price_dict.keys()))
-except Exception as e:
-    st.warning("📊 初始啟動中：請先在下方存入第一筆採買紀錄，系統將自動連動。")
-    item_list = []
+    df = conn.read(spreadsheet=URL, worksheet="Sheet1")
+    # 建立食材清單
+    if not df.empty and '項目' in df.columns:
+        price_dict = df.groupby('項目')['每克成本'].last().to_dict()
+        items = sorted(list(price_dict.keys()))
+    else:
+        items = []
+        price_dict = {}
+except:
+    df = pd.DataFrame()
+    items = []
     price_dict = {}
 
-tab1, tab2 = st.tabs(["🛒 採買記帳", "📊 菜單成本分析"])
+t1, t2 = st.tabs(["🛒 採買記帳", "📊 成本分析"])
 
-# --- 分頁 1：採買記錄 ---
-with tab1:
-    st.subheader("📝 新增採買紀錄")
-    with st.form("purchase_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        shop = col1.text_input("採買店家")
-        item = col2.text_input("項目 (食材名稱)")
+with t1:
+    with st.form("f1", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        shop = c1.text_input("店家")
+        name = c2.text_input("品項")
+        p = st.number_input("總價", min_value=0)
+        w = st.number_input("重量", min_value=0.01)
+        u = st.selectbox("單位", ["台斤", "公克(g)"])
         
-        col3, col4, col5 = st.columns([1.5, 1.5, 1])
-        price = col3.number_input("總價 (TWD)", min_value=0, step=1)
-        w_val = col4.number_input("購買重量", min_value=0.01)
-        unit = col5.selectbox("單位", ["台斤", "公克(g)"])
-        
-        if st.form_submit_button("🚀 送出並儲存"):
-            # 1台斤 = 600g
-            actual_g = w_val * 600 if unit == "台斤" else w_val
-            unit_p = round(price / actual_g, 4)
+        if st.form_submit_button("儲存"):
+            # 台斤換算：1台斤=600g
+            real_g = w * 600 if u == "台斤" else w
+            g_p = round(p / real_g, 4)
             
-            new_row = pd.DataFrame([{
-                "時間": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                "採買店家": shop,
-                "項目": item,
-                "總價": price,
-                "重量": w_val,
-                "單位": unit,
-                "每克成本": unit_p
-            }])
+            new_row = pd.DataFrame([{"時間": pd.Timestamp.now().strftime("%Y-%m-%d"), "店家": shop, "項目": name, "總價": p, "重量": w, "單位": u, "每克成本": g_p}])
             
-            try:
-                existing = conn.read(spreadsheet=SHEET_URL, worksheet="Sheet1")
-                updated = pd.concat([existing, new_row], ignore_index=True)
-            except:
-                updated = new_row
-                
-            conn.update(spreadsheet=SHEET_URL, worksheet="Sheet1", data=updated)
-            st.success(f"✅ 已存入！『{item}』換算每克成本為 ${unit_p}")
+            # 合併並上傳
+            res = pd.concat([df, new_row], ignore_index=True)
+            conn.update(spreadsheet=URL, worksheet="Sheet1", data=res)
+            st.success(f"存好了！{name} 每克 {g_p} 元")
             st.rerun()
 
-# --- 分頁 2：菜單成本分析 ---
-with tab2:
-    st.subheader("⚖️ 料理成本分析")
-    sell_price = st.number_input("預計售價", min_value=0)
-
-    if 'rows' not in st.session_state: st.session_state['rows'] = 3
-    
-    total_food_cost = 0.0
-    for i in range(st.session_state['rows']):
-        c1, c2, c3, c4 = st.columns([2.5, 1, 1, 1])
-        sel = c1.selectbox(f"選擇食材 {i+1}", ["-- 請選擇 --"] + item_list, key=f"s_{i}")
-        u_p = price_dict.get(sel, 0.0)
-        c2.write(f"單價: ${u_p}/g")
-        u_w = c3.number_input(f"用量(g)", min_value=0.0, key=f"w_{i}")
-        sub = round(u_p * u_w, 2)
-        c4.write(f"小計: ${sub}")
-        total_food_cost += sub
-
-    if st.button("➕ 增加一種食材"):
-        st.session_state['rows'] += 1
-        st.rerun()
-
-    st.divider()
-    if sell_price > 0:
-        margin = ((sell_price - total_food_cost) / sell_price) * 100
-        st.metric("總食材成本", f"${round(total_food_cost, 1)}")
-        st.metric("毛利率", f"{round(margin, 1)}%")
+with t2:
+    if not items:
+        st.info("請先去記帳，這裡才會有食材選單喔！")
+    else:
+        rows = st.number_input("食材種類數量", min_value=1, max_value=20, value=3)
+        total = 0.0
+        for i in range(int(rows)):
+            col1, col2, col3 = st.columns([2, 1, 1])
+            sel = col1.selectbox(f"食材 {i+1}", ["-選取-"] + items, key=f"s{i}")
+            weight = col2.number_input(f"克數", min_value=0.0, key=f"w{i}")
+            single_p = price_dict.get(sel, 0)
+            sub = round(single_p * weight, 2)
+            col3.write(f"小計: {sub}")
+            total += sub
+        st.divider()
+        st.metric("總成本", f"${round(total, 1)}")
