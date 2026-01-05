@@ -4,22 +4,20 @@ import pandas as pd
 
 st.set_page_config(page_title="餐飲成本智慧助手", layout="wide")
 
-# --- 暴力直接連線法 ---
-# 直接定義網址，避開 Secrets 編碼問題
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1dPuQ80Yudrym53l3h6FJygu2Yj_Y7fyfLBXNnFAEa4/edit#gid=0"
+# 這裡直接寫死您的網址，避開 Secrets 設定
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1dPuQ80Yudrym53l3h6FJygu2Yj_Y7fyfLBXNnFAEa4"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 st.title("🛡️ 料理成本智慧連動系統")
 
-# --- 讀取資料庫 ---
+# --- 讀取資料庫 (使用 Sheet1 避免編碼錯誤) ---
 try:
-    # 這裡直接傳入網址
-    inventory_df = conn.read(spreadsheet=SHEET_URL, worksheet="採買紀錄")
+    inventory_df = conn.read(spreadsheet=SHEET_URL, worksheet="Sheet1")
     price_dict = inventory_df.groupby('項目')['每克成本'].last().to_dict()
     item_list = sorted(list(price_dict.keys()))
 except Exception as e:
-    st.error(f"連線失敗，請確認試算表分頁名稱是否為『採買紀錄』。錯誤訊息: {e}")
+    st.warning("📊 初始啟動中：請先在下方存入第一筆採買紀錄，系統將自動連動。")
     item_list = []
     price_dict = {}
 
@@ -39,6 +37,7 @@ with tab1:
         unit = col5.selectbox("單位", ["台斤", "公克(g)"])
         
         if st.form_submit_button("🚀 送出並儲存"):
+            # 1台斤 = 600g
             actual_g = w_val * 600 if unit == "台斤" else w_val
             unit_p = round(price / actual_g, 4)
             
@@ -52,10 +51,13 @@ with tab1:
                 "每克成本": unit_p
             }])
             
-            # 儲存時也直接使用網址
-            existing = conn.read(spreadsheet=SHEET_URL, worksheet="採買紀錄")
-            updated = pd.concat([existing, new_row], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet="採買紀錄", data=updated)
+            try:
+                existing = conn.read(spreadsheet=SHEET_URL, worksheet="Sheet1")
+                updated = pd.concat([existing, new_row], ignore_index=True)
+            except:
+                updated = new_row
+                
+            conn.update(spreadsheet=SHEET_URL, worksheet="Sheet1", data=updated)
             st.success(f"✅ 已存入！『{item}』換算每克成本為 ${unit_p}")
             st.rerun()
 
